@@ -3,7 +3,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from gradio_client import Client, handle_file
+from gradio_client import Client
 from retry import retry
 from PIL import Image, ImageEnhance
 import os
@@ -129,9 +129,9 @@ async def face_swap(source_image: str, dest_image: str, source_face_idx: int = 1
 
         client = Client("Dentro/face-swap")
         result = client.predict(
-            sourceImage=handle_file(source_image),
+            sourceImage=source_image,  # Pass file path directly
             sourceFaceIndex=source_face_idx,
-            destinationImage=handle_file(dest_image),
+            destinationImage=dest_image,  # Pass file path directly
             destinationFaceIndex=dest_face_idx,
             api_name="/predict"
         )
