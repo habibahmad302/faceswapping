@@ -21,6 +21,14 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Create static directories at startup for Railway
+STATIC_DIR = "static"
+UPLOAD_FOLDER = os.path.join(STATIC_DIR, "uploads")
+OUTPUT_FOLDER = os.path.join(STATIC_DIR, "output")
+os.makedirs(STATIC_DIR, exist_ok=True)
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
 app = FastAPI()
 
 # Dynamic CORS for universal compatibility
@@ -34,20 +42,14 @@ app.add_middleware(
 )
 
 # Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Templates (for manual testing)
 templates = Jinja2Templates(directory="templates")
 
 # Configuration
-UPLOAD_FOLDER = "static/uploads"
-OUTPUT_FOLDER = "static/output"
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 BASE_URL = os.getenv("BASE_URL", "https://your-railway-app.up.railway.app")
-
-# Create directories at startup for Railway
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # Shopify configuration from environment variables
 SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
