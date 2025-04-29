@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Face Swap API Test</title>
+</head>
+<body>
+    <h1>Face Swap API Test</h1>
+    <form action="/swap" method="post" enctype="multipart/form-data">
+        <label>Source Image:</label>
+        <input type="file" name="source_image" accept="image/png,image/jpeg" required><br><br>
+        <label>Destination Image:</label>
+        <input type="file" name="dest_image" accept="image/png,image/jpeg" required><br><br>
+        <button type="submit">Swap Faces</button>
+    </form>
+    {% if result_image %}
+        <h2>Result:</h2>
+        <img src="{{ result_image }}" alt="Face Swap Result" style="max-width: 100%;">
+    {% endif %}
+</body>
+</html>
