@@ -8,7 +8,6 @@ from retry import retry
 from PIL import Image, ImageEnhance
 import os
 import uuid
-from pathlib import Path
 import hashlib
 from cachetools import TTLCache
 import tempfile
@@ -16,6 +15,7 @@ import shopify
 import base64
 from typing import Optional
 import logging
+import face_recognition
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -65,16 +65,30 @@ def allowed_file(filename: str) -> bool:
 def validate_file(file_path: str) -> bool:
     """Validate if the file exists and is an image."""
     if not os.path.exists(file_path):
+        logger.error(f"File does not exist: {file_path}")
         return False
     if not file_path.lower().endswith(('.png', '.jpg', '.jpeg')):
+        logger.error(f"Invalid file format: {file_path}")
         return False
     return True
+
+def validate_image_for_face_swap(file_path: str) -> bool:
+    """Check if the image contains at least one detectable face."""
+    try:
+        img = face_recognition.load_image_file(file_path)
+        faces = face_recognition.face_locations(img)
+        if len(faces) == 0:
+            logger.error(f"No faces detected in {file_path}")
+        return len(faces) > 0
+    except Exception as e:
+        logger.error(f"Face detection error for {file_path}: {e}")
+        return False
 
 def get_file_hash(file_content: bytes) -> str:
     """Generate a hash for a file to use as cache key."""
     return hashlib.sha256(file_content).hexdigest()
 
-def compress_image(content: bytes, max_size: int = 1024) -> bytes:
+def compress_image(content: bytes, max_size: int = 512) -> bytes:
     """Compress image to reduce size while maintaining quality."""
     temp_file = None
     temp_output = None
@@ -85,9 +99,10 @@ def compress_image(content: bytes, max_size: int = 1024) -> bytes:
         img = Image.open(temp_file.name)
         img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
         temp_output = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-        img.save(temp_output.name, "PNG", optimize=True, quality=85)
+        img.save(temp_output.name, "PNG", optimize=True, quality=75)
         with open(temp_output.name, "rb") as f:
             compressed_content = f.read()
+        logger.info(f"Compressed image size: {len(compressed_content)} bytes")
         return compressed_content
     except Exception as e:
         logger.error(f"Compression error: {e}")
@@ -127,27 +142,41 @@ async def face_swap(source_image: str, dest_image: str, source_face_idx: int = 1
     """Perform face swap using Gradio Client with retry logic."""
     try:
         if not all([validate_file(source_image), validate_file(dest_image)]):
-            return "Invalid input files"
+            return "Invalid input files: Incorrect format or files not found"
+        if not all([validate_image_for_face_swap(source_image), validate_image_for_face_swap(dest_image)]):
+            return "Invalid input files: No detectable faces in one or both images"
 
+        logger.info(f"Attempting face swap: source={source_image}, dest={dest_image}")
         client = Client("Dentro/face-swap")
         result = client.predict(
-            sourceImage=source_image,  # Pass file path directly
+            sourceImage=source_image,
             sourceFaceIndex=source_face_idx,
-            destinationImage=dest_image,  # Pass file path directly
+            destinationImage=dest_image,
             destinationFaceIndex=dest_face_idx,
             api_name="/predict"
         )
 
+        logger.info(f"Gradio result: {result}")
         if result and os.path.exists(result):
             unique_filename = f"face_swap_{uuid.uuid4().hex}.png"
             final_path = save_output_image(result, OUTPUT_FOLDER, unique_filename)
             if final_path:
                 return final_path
             return "Failed to save output"
-        return "Face swap failed"
+        return "Face swap failed: No result returned"
     except Exception as e:
-        logger.error(f"Face swap error: {e}")
+        logger.error(f"Face swap error: {e}", exc_info=True)
         return f"Error: {str(e)}"
+
+@app.get("/test-gradio")
+async def test_gradio():
+    """Test connectivity to the Gradio API."""
+    try:
+        client = Client("Dentro/face-swap")
+        return {"status": "Gradio API accessible"}
+    except Exception as e:
+        logger.error(f"Gradio connectivity error: {e}")
+        return {"error": str(e)}
 
 @app.get("/")
 async def index(request: Request):
@@ -158,6 +187,7 @@ async def index(request: Request):
 async def swap_faces(source_image: UploadFile = File(...), dest_image: UploadFile = File(...)):
     """Perform face swap on uploaded images."""
     try:
+        logger.info(f"Received files: source={source_image.filename}, dest={dest_image.filename}")
         # Validate file uploads
         if not source_image.filename or not dest_image.filename:
             return JSONResponse(status_code=400, content={"error": "No file selected"})
@@ -168,6 +198,7 @@ async def swap_faces(source_image: UploadFile = File(...), dest_image: UploadFil
         # Read and compress file contents
         source_content = await source_image.read()
         dest_content = await dest_image.read()
+        logger.info(f"Source file size: {len(source_content)} bytes, Dest file size: {len(dest_content)} bytes")
         source_content = compress_image(source_content)
         dest_content = compress_image(dest_content)
 
@@ -194,7 +225,9 @@ async def swap_faces(source_image: UploadFile = File(...), dest_image: UploadFil
 
             # Perform face swap
             result = await face_swap(source_path, dest_path)
-            if result.startswith("Error") or result == "Invalid input files" or result == "Failed to save output":
+            if result.startswith("Error") or result in ["Invalid input files: Incorrect format or files not found", 
+                                                        "Invalid input files: No detectable faces in one or both images", 
+                                                        "Failed to save output"]:
                 return JSONResponse(status_code=500, content={"error": result})
 
             # Cache result
@@ -204,7 +237,7 @@ async def swap_faces(source_image: UploadFile = File(...), dest_image: UploadFil
             result_url = f"{BASE_URL}/{result}"
             return {"result_image": result_url}
     except Exception as e:
-        logger.error(f"Swap endpoint error: {e}")
+        logger.error(f"Swap endpoint error: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": f"Unexpected error: {str(e)}"})
 
 @app.post("/create-shopify-product")
